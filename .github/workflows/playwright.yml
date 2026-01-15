@@ -68,19 +68,47 @@ jobs:
           git log --oneline -1
 
       # ========================================================================
-      # STEP 3: START SYLIUS WITH DOCKER COMPOSE
+      # STEP 3: CREATE DOCKER COMPOSE OVERRIDE FOR CI
       # ========================================================================
-      # Uses the official Sylius Docker setup
-      # Services: php, mysql, nginx, mailhog
-      # 
-      # IMPORTANT: Must use both compose.yml AND compose.override.yml
-      # - compose.yml: defines services
-      # - compose.override.yml: adds volume mounts (maps code into containers)
+      # The Sylius Standard repo has compose.override.yml.dist (template)
+      # We need to create compose.override.yml with volume mounts for CI
+      # ========================================================================
+      - name: Create Docker Compose override for CI
+        working-directory: sylius
+        run: |
+          # Copy the dist file if it exists, otherwise create minimal override
+          if [ -f compose.override.yml.dist ]; then
+            cp compose.override.yml.dist compose.override.yml
+          else
+            # Create minimal override with volume mounts
+            cat > compose.override.yml << 'EOF'
+          services:
+            php:
+              volumes:
+                - .:/srv/sylius:rw
+              environment:
+                APP_ENV: dev
+                APP_DEBUG: 0
+                DATABASE_URL: "mysql://root@mysql/sylius_dev"
+            nginx:
+              volumes:
+                - ./public:/srv/sylius/public:ro
+              ports:
+                - "80:80"
+            mysql:
+              ports:
+                - "3306:3306"
+          EOF
+          fi
+          echo "Override file created"
+          cat compose.override.yml
+
+      # ========================================================================
+      # STEP 4: START SYLIUS WITH DOCKER COMPOSE
       # ========================================================================
       - name: Start Sylius with Docker Compose
         working-directory: sylius
         run: |
-          # Explicitly use both compose files to ensure volume mounts work
           docker compose -f compose.yml -f compose.override.yml up -d
           echo "Docker containers starting..."
 
