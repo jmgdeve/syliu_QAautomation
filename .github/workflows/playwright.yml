@@ -178,16 +178,29 @@ jobs:
       - name: Configure Symfony environment
         working-directory: sylius
         run: |
-          # Set APP_SECRET in .env.local (required for Symfony)
-          echo "APP_SECRET=ThisIsASecretForCI12345" >> .env.local
-          echo "APP_ENV=dev" >> .env.local
+          # Set environment variables in .env.local
+          cat > .env.local << 'EOF'
+          APP_ENV=dev
+          APP_DEBUG=1
+          APP_SECRET=ThisIsASecretForCI12345
+          DATABASE_URL=mysql://root@mysql/sylius_dev
+          MAILER_DSN=null://null
+          EOF
+          
+          echo "=== .env.local contents ==="
+          cat .env.local
           
           # Clear and warm the cache
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:clear
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:warmup
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:clear --env=dev || true
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:warmup --env=dev || true
           
           # Install assets
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console assets:install public
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console assets:install public --env=dev
+          
+          # Test if app is working
+          echo "=== Testing Symfony console ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console about || true
+          
           echo "Symfony configured!"
 
       # ========================================================================
@@ -206,6 +219,7 @@ jobs:
           docker compose -f compose.yml -f compose.override.yml logs php || true
 
       - name: Wait for Nginx and verify Sylius
+        working-directory: sylius
         run: |
           echo "Waiting for Nginx..."
           for i in {1..30}; do
@@ -221,12 +235,17 @@ jobs:
             sleep 5
           done
           
-          # If we got here, either timeout or 500 error - show debugging info
-          echo "=== Checking what's wrong ==="
-          curl -s http://localhost 2>&1 | head -50 || true
+          # Show Symfony error logs
+          echo "=== Symfony var/log/dev.log (last 100 lines) ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php cat var/log/dev.log 2>/dev/null | tail -100 || echo "No dev.log found"
+          
           echo ""
           echo "=== PHP-FPM logs ==="
-          docker compose -f sylius/compose.yml -f sylius/compose.override.yml logs php 2>&1 | tail -50 || true
+          docker compose -f compose.yml -f compose.override.yml logs php 2>&1 | tail -50 || true
+          
+          echo ""
+          echo "=== Trying API endpoint directly ==="
+          curl -s http://localhost/api/v2/shop/channels | head -20 || true
           
           # Check if it's a 500 error (server is running but app has issues)
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost 2>/dev/null || echo "000")
