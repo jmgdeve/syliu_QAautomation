@@ -172,8 +172,19 @@ jobs:
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console lexik:jwt:generate-keypair --skip-if-exists
           echo "JWT keys generated!"
 
-      # NOTE: We use the default admin created by Sylius fixtures:
-      # Email: sylius@example.com, Password: sylius
+      # ========================================================================
+      # STEP 7b: GRANT API ACCESS TO DEFAULT ADMIN
+      # ========================================================================
+      # The default admin doesn't have ROLE_API_ACCESS, which is required
+      # to use the Admin API endpoints.
+      # ========================================================================
+      - name: Grant API access to admin user
+        working-directory: sylius
+        run: |
+          echo "Granting ROLE_API_ACCESS to default admin..."
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:query:sql \
+            "UPDATE sylius_admin_user SET roles = '[\"ROLE_ADMINISTRATION_ACCESS\", \"ROLE_API_ACCESS\"]' WHERE username = 'sylius'"
+          echo "Admin now has API access!"
 
       # ========================================================================
       # STEP 8: CONFIGURE SYMFONY AND WARM CACHE
