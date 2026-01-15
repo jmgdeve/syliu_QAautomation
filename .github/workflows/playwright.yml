@@ -161,13 +161,19 @@ jobs:
           echo "Database and fixtures ready!"
 
       # ========================================================================
-      # STEP 7: CREATE QA ADMIN USER
+      # STEP 7: GENERATE JWT KEYS FOR API AUTHENTICATION
       # ========================================================================
-      # Creates admin user matching testData.ts credentials
+      # Sylius API uses JWT tokens. Without keys, login returns 500 error.
       # ========================================================================
+      - name: Generate JWT keys
+        working-directory: sylius
+        run: |
+          echo "Generating JWT keypair for API authentication..."
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console lexik:jwt:generate-keypair --skip-if-exists
+          echo "JWT keys generated!"
+
       # NOTE: We use the default admin created by Sylius fixtures:
       # Email: sylius@example.com, Password: sylius
-      # No need to create a separate QA admin user
 
       # ========================================================================
       # STEP 8: CONFIGURE SYMFONY AND WARM CACHE
