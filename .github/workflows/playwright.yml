@@ -1,11 +1,11 @@
 # =============================================================================
-# CI/CD WORKFLOW FOR PLAYWRIGHT TESTS WITH SYLIUS STANDARD
+# CI/CD WORKFLOW FOR PLAYWRIGHT API TESTS WITH SYLIUS STANDARD
 # =============================================================================
 #
 # ARCHITECTURE:
 # -------------
-# This workflow clones Sylius Standard, starts it with Docker Compose,
-# then runs our Playwright tests against it.
+# This workflow demonstrates a common CI/CD pattern: cloning an application,
+# provisioning it with Docker Compose, and running automated tests against it.
 #
 #   ┌─────────────────────────────────────────────────────────────────┐
 #   │                    GITHUB ACTIONS RUNNER                        │
@@ -14,7 +14,7 @@
 #   │  │  QA AUTOMATION REPO  │    │  SYLIUS STANDARD     │          │
 #   │  │  (this repo)         │    │  (cloned in CI)      │          │
 #   │  │                      │    │                      │          │
-#   │  │  - Playwright tests  │    │  - PHP app           │          │
+#   │  │  - Playwright tests  │    │  - PHP/Symfony app   │          │
 #   │  │  - Test data         │    │  - Docker Compose    │          │
 #   │  │  - API clients       │    │  - Fixtures          │          │
 #   │  └──────────────────────┘    └──────────────────────┘          │
@@ -28,6 +28,15 @@
 #   │              Tests connect to localhost:80                     │
 #   └─────────────────────────────────────────────────────────────────┘
 #
+# KEY CI/CD CONCEPTS DEMONSTRATED:
+# --------------------------------
+# 1. TRIGGERS (on): push, pull_request, workflow_dispatch
+# 2. DOCKER COMPOSE: Multi-container orchestration
+# 3. HEALTH CHECKS: Wait for services to be ready
+# 4. FIXTURES: Load consistent test data
+# 5. ARTIFACTS: Save test reports
+# 6. CLEANUP: Always stop containers
+#
 # =============================================================================
 
 name: Playwright Tests
@@ -37,59 +46,37 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       # ========================================================================
-      # STEP 1: CHECKOUT TEST REPOSITORY (this repo)
+      # PHASE 1: SETUP REPOSITORIES
       # ========================================================================
+
       - name: Checkout test repository
         uses: actions/checkout@v4
         with:
           path: tests
 
-      # ========================================================================
-      # STEP 2: CLONE SYLIUS STANDARD
-      # ========================================================================
-      # ARCHITECTURE CONCEPT: Separation of Concerns
-      # - Test code lives in THIS repo
-      # - Application code lives in Sylius Standard
-      # - CI brings them together temporarily
-      # ========================================================================
       - name: Clone Sylius Standard
-        run: |
-          git clone --depth 1 https://github.com/Sylius/Sylius-Standard.git sylius
-          cd sylius
-          git log --oneline -1
+        run: git clone --depth 1 https://github.com/Sylius/Sylius-Standard.git sylius
 
       # ========================================================================
-      # STEP 3: CREATE DOCKER COMPOSE OVERRIDE FOR CI
+      # PHASE 2: CONFIGURE AND START DOCKER SERVICES
       # ========================================================================
-      # The Sylius Standard repo has compose.override.yml.dist (template)
-      # We need to create compose.override.yml with volume mounts for CI
-      # ========================================================================
+
       - name: Create Docker Compose override for CI
         working-directory: sylius
         run: |
-          # Copy the dist file if it exists, otherwise create minimal override
-          # Check if Sylius files exist
-          echo "=== Verify Sylius files ==="
-          ls -la
-          echo ""
-          echo "=== composer.json exists? ==="
-          head -5 composer.json || echo "ERROR: composer.json not found!"
-          
           if [ -f compose.override.yml.dist ]; then
-            echo "Using compose.override.yml.dist as base"
             cp compose.override.yml.dist compose.override.yml
             sed -i 's/APP_DEBUG: 0/APP_DEBUG: 1/g' compose.override.yml || true
           else
-            echo "Creating minimal compose.override.yml"
             echo 'services:'                                      > compose.override.yml
             echo '  php:'                                        >> compose.override.yml
             echo '    volumes:'                                  >> compose.override.yml
@@ -111,217 +98,79 @@ jobs:
             echo '    ports:'                                    >> compose.override.yml
             echo '      - "3306:3306"'                           >> compose.override.yml
           fi
-          echo "=== compose.override.yml contents ==="
-          cat compose.override.yml
 
-      # ========================================================================
-      # STEP 4: START SYLIUS WITH DOCKER COMPOSE
-      # ========================================================================
-      - name: Start Sylius with Docker Compose
+      - name: Start Docker services
         working-directory: sylius
-        run: |
-          docker compose -f compose.yml -f compose.override.yml up -d
-          echo "Docker containers starting..."
+        run: docker compose -f compose.yml -f compose.override.yml up -d
 
-      # ========================================================================
-      # STEP 4: WAIT FOR MYSQL TO BE HEALTHY
-      # ========================================================================
       - name: Wait for MySQL
         working-directory: sylius
         run: |
-          echo "Waiting for MySQL..."
+          echo "Waiting for MySQL to be ready..."
           timeout 120 bash -c 'until docker compose -f compose.yml -f compose.override.yml exec -T mysql mysqladmin ping -h localhost --silent; do
-            echo "Waiting for MySQL..."
             sleep 5
           done'
           echo "MySQL is ready!"
 
       # ========================================================================
-      # STEP 5: INSTALL COMPOSER DEPENDENCIES
+      # PHASE 3: INSTALL DEPENDENCIES AND CONFIGURE APPLICATION
       # ========================================================================
+
       - name: Install Composer dependencies
         working-directory: sylius
-        run: |
-          docker compose -f compose.yml -f compose.override.yml exec -T php composer install --no-interaction --prefer-dist
+        run: docker compose -f compose.yml -f compose.override.yml exec -T php composer install --no-interaction --prefer-dist
 
-      # ========================================================================
-      # STEP 6: SETUP DATABASE AND FIXTURES
-      # ========================================================================
-      # ARCHITECTURE CONCEPT: Test Data Management
-      # - Create database schema
-      # - Load fixtures (products, channels, users)
-      # - Creates consistent starting state for tests
-      # ========================================================================
       - name: Setup database and load fixtures
         working-directory: sylius
         run: |
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:database:create --if-not-exists
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:migrations:migrate --no-interaction
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console sylius:fixtures:load --no-interaction
-          echo "Database and fixtures ready!"
 
-      # ========================================================================
-      # STEP 7: GENERATE JWT KEYS FOR API AUTHENTICATION
-      # ========================================================================
-      # Sylius API uses JWT tokens. Without keys, login returns 500 error.
-      # ========================================================================
-      - name: Generate JWT keys
+      - name: Generate JWT keys for API authentication
         working-directory: sylius
-        run: |
-          echo "Generating JWT keypair for API authentication..."
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console lexik:jwt:generate-keypair --skip-if-exists
-          echo "JWT keys generated!"
+        run: docker compose -f compose.yml -f compose.override.yml exec -T php bin/console lexik:jwt:generate-keypair --skip-if-exists
 
-      # ========================================================================
-      # STEP 7b: GRANT API ACCESS TO DEFAULT ADMIN
-      # ========================================================================
-      # The default admin doesn't have ROLE_API_ACCESS, which is required
-      # to use the Admin API endpoints.
-      # ========================================================================
       - name: Grant API access to admin user
         working-directory: sylius
         run: |
-          echo "Granting ROLE_API_ACCESS to default admin..."
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:query:sql \
             "UPDATE sylius_admin_user SET roles = '[\"ROLE_ADMINISTRATION_ACCESS\", \"ROLE_API_ACCESS\"]' WHERE username = 'sylius'"
-          echo "Admin now has API access!"
 
-      # ========================================================================
-      # STEP 8: CONFIGURE SYMFONY AND WARM CACHE
-      # ========================================================================
-      # Symfony needs:
-      # - APP_SECRET set (security)
-      # - Cache warmed (performance)
-      # - Assets installed
-      # ========================================================================
       - name: Configure Symfony environment
         working-directory: sylius
         run: |
-          # Set environment variables in .env.local (no indentation!)
           echo "APP_ENV=dev" > .env.local
           echo "APP_DEBUG=1" >> .env.local
           echo "APP_SECRET=ThisIsASecretForCI12345" >> .env.local
           echo "DATABASE_URL=mysql://root@mysql/sylius_dev" >> .env.local
           echo "MAILER_DSN=null://null" >> .env.local
-          
-          echo "=== .env.local contents ==="
-          cat .env.local
-          
-          # Clear and warm the cache
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:clear --env=dev || true
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console cache:warmup --env=dev || true
-          
-          # Install assets
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console assets:install public --env=dev
-          
-          # Test if app is working
-          echo "=== Testing Symfony console ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console about || echo "Console failed"
-          
-          # Test database connection
-          echo "=== Testing database connection ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:query:sql "SELECT 1" || echo "DB connection failed"
-          
-          echo "Symfony configured!"
 
       # ========================================================================
-      # STEP 9: CHECK DOCKER STATUS AND WAIT FOR NGINX
+      # PHASE 4: VERIFY APPLICATION IS READY
       # ========================================================================
-      - name: Check Docker containers status
-        working-directory: sylius
-        run: |
-          echo "=== Docker containers status ==="
-          docker compose -f compose.yml -f compose.override.yml ps
-          echo ""
-          echo "=== Nginx logs ==="
-          docker compose -f compose.yml -f compose.override.yml logs nginx || true
-          echo ""
-          echo "=== PHP logs ==="
-          docker compose -f compose.yml -f compose.override.yml logs php || true
 
       - name: Wait for Nginx and verify Sylius
-        working-directory: sylius
         run: |
-          echo "Waiting for Nginx..."
+          echo "Waiting for Sylius to be ready..."
           for i in {1..30}; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost 2>/dev/null || echo "000")
             if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ] || [ "$HTTP_CODE" = "301" ]; then
-              echo "Sylius is ready at http://localhost! (HTTP $HTTP_CODE)"
+              echo "✅ Sylius is ready! (HTTP $HTTP_CODE)"
               exit 0
-            elif [ "$HTTP_CODE" = "500" ]; then
-              echo "Server responding but with error (HTTP 500). Checking logs..."
-              break
             fi
-            echo "Attempt $i: HTTP $HTTP_CODE - Waiting..."
-            sleep 5
+            echo "Attempt $i/30: HTTP $HTTP_CODE - Waiting..."
+            sleep 3
           done
-          
-          # Show detailed debugging info
-          echo "=== Check files exist in container (volume mount working?) ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la / | head -20
-          echo ""
-          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/ | head -20 || echo "Cannot list /srv/sylius!"
-          
-          echo ""
-          echo "=== Check vendor directory exists ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/vendor/ | head -10 || echo "No vendor directory!"
-          
-          echo ""
-          echo "=== Check .env files ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/.env* || echo "No .env files found!"
-          
-          echo ""
-          echo "=== Check .env.local content (and line endings) ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php cat -A .env.local 2>/dev/null || echo ".env.local not found!"
-          
-          echo ""
-          echo "=== Check file permissions ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php id
-          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/var/ || echo "No var directory!"
-          
-          echo ""
-          echo "=== Check current Symfony environment ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console debug:dotenv 2>&1 | head -30 || echo "dotenv debug failed"
-          
-          echo ""
-          echo "=== Check for PHP errors (stderr) ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php php -d display_errors=1 -r "require 'vendor/autoload.php';" 2>&1 || echo "Autoload check done"
-          
-          echo ""
-          echo "=== Try running Symfony console ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console --version 2>&1 || echo "Console failed"
-          
-          echo ""
-          echo "=== Check nginx error log ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T nginx cat /var/log/nginx/error.log 2>/dev/null | tail -30 || echo "No nginx error log"
-          
-          echo ""
-          echo "=== PHP-FPM logs ==="
-          docker compose -f compose.yml -f compose.override.yml logs php 2>&1 | tail -50 || true
-          
-          echo ""
-          echo "=== Symfony var/log/dev.log (last 50 lines) ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php cat var/log/dev.log 2>/dev/null | tail -50 || echo "No dev.log found"
-          
-          echo ""
-          echo "=== Try direct PHP request to see actual error ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php php -d display_errors=1 -d error_reporting=E_ALL public/index.php 2>&1 | head -100 || true
-          
-          echo ""
-          echo "=== Trying API endpoint ==="
-          curl -s -H "Accept: application/ld+json" http://localhost/api/v2/shop/channels 2>&1 | head -50 || true
-          
-          # Check if it's a 500 error (server is running but app has issues)
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost 2>/dev/null || echo "000")
-          if [ "$HTTP_CODE" = "500" ]; then
-            echo "WARNING: Sylius returning 500, but server is running. Continuing to see if API works..."
-            exit 0
-          fi
+          echo "❌ Sylius did not become ready in time"
           exit 1
 
       # ========================================================================
-      # STEP 10: SETUP NODE.JS FOR PLAYWRIGHT
+      # PHASE 5: RUN PLAYWRIGHT TESTS
       # ========================================================================
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -329,23 +178,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: tests/package-lock.json
 
-      # ========================================================================
-      # STEP 11: INSTALL TEST DEPENDENCIES
-      # ========================================================================
       - name: Install test dependencies
         working-directory: tests
         run: npm ci
 
-      # ========================================================================
-      # STEP 12: INSTALL PLAYWRIGHT BROWSERS
-      # ========================================================================
       - name: Install Playwright browsers
         working-directory: tests
         run: npx playwright install --with-deps chromium
 
-      # ========================================================================
-      # STEP 13: RUN PLAYWRIGHT TESTS
-      # ========================================================================
       - name: Run Playwright tests
         working-directory: tests
         run: npx playwright test
@@ -353,9 +193,10 @@ jobs:
           CI: true
 
       # ========================================================================
-      # STEP 14: UPLOAD TEST REPORT
+      # PHASE 6: ARTIFACTS AND CLEANUP
       # ========================================================================
-      - name: Upload Playwright report
+
+      - name: Upload test report
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -363,33 +204,16 @@ jobs:
           path: tests/playwright-report/
           retention-days: 30
 
-      # ========================================================================
-      # STEP 15: SHOW LOGS ON FAILURE
-      # ========================================================================
-      - name: Show Docker logs on failure
+      - name: Show logs on failure
         if: failure()
         working-directory: sylius
         run: |
-          docker compose -f compose.yml -f compose.override.yml logs php
-          docker compose -f compose.yml -f compose.override.yml logs nginx
-          docker compose -f compose.yml -f compose.override.yml logs mysql
+          echo "=== PHP Logs ==="
+          docker compose -f compose.yml -f compose.override.yml logs php --tail=50
+          echo "=== Nginx Logs ==="
+          docker compose -f compose.yml -f compose.override.yml logs nginx --tail=50
 
-      # ========================================================================
-      # STEP 16: CLEANUP
-      # ========================================================================
       - name: Cleanup Docker
         if: always()
         working-directory: sylius
         run: docker compose -f compose.yml -f compose.override.yml down --volumes
-
-# =============================================================================
-# EXPECTED TIMELINE (first run):
-# =============================================================================
-# - Clone repos: ~30s
-# - Docker pull: ~3-5 min (cached after first run)
-# - Composer install: ~2-3 min
-# - Fixtures + assets: ~2-3 min
-# - Playwright install: ~1 min
-# - Tests: ~1-2 min
-# - Total: ~10-15 min (first run), ~5-8 min (cached)
-# =============================================================================
