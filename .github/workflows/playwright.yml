@@ -178,14 +178,12 @@ jobs:
       - name: Configure Symfony environment
         working-directory: sylius
         run: |
-          # Set environment variables in .env.local
-          cat > .env.local << 'EOF'
-          APP_ENV=dev
-          APP_DEBUG=1
-          APP_SECRET=ThisIsASecretForCI12345
-          DATABASE_URL=mysql://root@mysql/sylius_dev
-          MAILER_DSN=null://null
-          EOF
+          # Set environment variables in .env.local (no indentation!)
+          echo "APP_ENV=dev" > .env.local
+          echo "APP_DEBUG=1" >> .env.local
+          echo "APP_SECRET=ThisIsASecretForCI12345" >> .env.local
+          echo "DATABASE_URL=mysql://root@mysql/sylius_dev" >> .env.local
+          echo "MAILER_DSN=null://null" >> .env.local
           
           echo "=== .env.local contents ==="
           cat .env.local
@@ -199,7 +197,11 @@ jobs:
           
           # Test if app is working
           echo "=== Testing Symfony console ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console about || true
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console about || echo "Console failed"
+          
+          # Test database connection
+          echo "=== Testing database connection ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console doctrine:query:sql "SELECT 1" || echo "DB connection failed"
           
           echo "Symfony configured!"
 
@@ -245,7 +247,13 @@ jobs:
           
           echo ""
           echo "=== Trying API endpoint directly ==="
-          curl -s http://localhost/api/v2/shop/channels | head -20 || true
+          curl -s -H "Accept: application/ld+json" http://localhost/api/v2/shop/channels 2>&1 | head -50 || true
+          
+          echo ""
+          echo "=== Trying admin token endpoint ==="
+          curl -s -X POST http://localhost/api/v2/admin/administrators/token \
+            -H "Content-Type: application/json" \
+            -d '{"email":"sylius@example.com","password":"sylius"}' 2>&1 | head -20 || true
           
           # Check if it's a 500 error (server is running but app has issues)
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost 2>/dev/null || echo "000")
