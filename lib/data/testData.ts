@@ -5,9 +5,10 @@ export const defaultPassword = "qauser1";
 export const defaultLocale = "en_US";
 
 // Admin credentials for API authentication
+// Uses the default admin created by Sylius fixtures (works in both local and CI)
 export const adminCredentials = {
-    email: 'qa@example.com',
-    password: 'sylius123',
+    email: 'sylius@example.com',
+    password: 'sylius',
     tokenEndpoint: '/api/v2/admin/administrators/token'
 };
 

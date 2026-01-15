@@ -165,12 +165,9 @@ jobs:
       # ========================================================================
       # Creates admin user matching testData.ts credentials
       # ========================================================================
-      - name: Create QA admin user
-        working-directory: sylius
-        run: |
-          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console sylius:user:create \
-            qa@example.com sylius123 QA Admin en_US --admin || echo "User may already exist"
-          echo "QA admin user ready!"
+      # NOTE: We use the default admin created by Sylius fixtures:
+      # Email: sylius@example.com, Password: sylius
+      # No need to create a separate QA admin user
 
       # ========================================================================
       # STEP 8: CONFIGURE SYMFONY AND WARM CACHE
