@@ -235,7 +235,7 @@ test.describe('🔴 CRITICAL: Security & Authorization', () => {
         await shopClient.login_token(userAEmail, defaultPassword);
 
         // Make many rapid requests
-        const requests = [];
+        const requests: Promise<import('@playwright/test').APIResponse>[] = [];
         for (let i = 0; i < 20; i++) {
             requests.push(shopClient.get('/api/v2/shop/products'));
         }
