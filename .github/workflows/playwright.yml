@@ -237,23 +237,41 @@ jobs:
             sleep 5
           done
           
-          # Show Symfony error logs
-          echo "=== Symfony var/log/dev.log (last 100 lines) ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php cat var/log/dev.log 2>/dev/null | tail -100 || echo "No dev.log found"
+          # Show detailed debugging info
+          echo "=== Check .env.local exists in container ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php cat .env.local || echo ".env.local not found!"
+          
+          echo ""
+          echo "=== Check current Symfony environment ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console debug:dotenv 2>&1 | head -30 || echo "dotenv debug failed"
+          
+          echo ""
+          echo "=== Check for PHP errors (stderr) ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php php -d display_errors=1 -r "require 'vendor/autoload.php';" 2>&1 || echo "Autoload check done"
+          
+          echo ""
+          echo "=== Try running Symfony console ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php bin/console --version 2>&1 || echo "Console failed"
+          
+          echo ""
+          echo "=== Check nginx error log ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T nginx cat /var/log/nginx/error.log 2>/dev/null | tail -30 || echo "No nginx error log"
           
           echo ""
           echo "=== PHP-FPM logs ==="
           docker compose -f compose.yml -f compose.override.yml logs php 2>&1 | tail -50 || true
           
           echo ""
-          echo "=== Trying API endpoint directly ==="
-          curl -s -H "Accept: application/ld+json" http://localhost/api/v2/shop/channels 2>&1 | head -50 || true
+          echo "=== Symfony var/log/dev.log (last 50 lines) ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php cat var/log/dev.log 2>/dev/null | tail -50 || echo "No dev.log found"
           
           echo ""
-          echo "=== Trying admin token endpoint ==="
-          curl -s -X POST http://localhost/api/v2/admin/administrators/token \
-            -H "Content-Type: application/json" \
-            -d '{"email":"sylius@example.com","password":"sylius"}' 2>&1 | head -20 || true
+          echo "=== Try direct PHP request to see actual error ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php php -d display_errors=1 -d error_reporting=E_ALL public/index.php 2>&1 | head -100 || true
+          
+          echo ""
+          echo "=== Trying API endpoint ==="
+          curl -s -H "Accept: application/ld+json" http://localhost/api/v2/shop/channels 2>&1 | head -50 || true
           
           # Check if it's a 500 error (server is running but app has issues)
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost 2>/dev/null || echo "000")
