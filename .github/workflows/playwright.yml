@@ -87,33 +87,29 @@ jobs:
           if [ -f compose.override.yml.dist ]; then
             echo "Using compose.override.yml.dist as base"
             cp compose.override.yml.dist compose.override.yml
-            # Enable debug mode
             sed -i 's/APP_DEBUG: 0/APP_DEBUG: 1/g' compose.override.yml || true
           else
             echo "Creating minimal compose.override.yml"
-            # Create override file with proper YAML (no indentation in heredoc!)
-            cat > compose.override.yml << 'ENDOFFILE'
-services:
-  php:
-    volumes:
-      - .:/srv/sylius:rw
-      - ./public:/srv/sylius/public:rw
-    environment:
-      APP_ENV: dev
-      APP_DEBUG: "1"
-      DATABASE_URL: "mysql://root@mysql/sylius_dev"
-  nginx:
-    depends_on:
-      php:
-        condition: service_started
-    volumes:
-      - ./public:/srv/sylius/public:ro
-    ports:
-      - "80:80"
-  mysql:
-    ports:
-      - "3306:3306"
-ENDOFFILE
+            echo 'services:'                                      > compose.override.yml
+            echo '  php:'                                        >> compose.override.yml
+            echo '    volumes:'                                  >> compose.override.yml
+            echo '      - .:/srv/sylius:rw'                      >> compose.override.yml
+            echo '      - ./public:/srv/sylius/public:rw'        >> compose.override.yml
+            echo '    environment:'                              >> compose.override.yml
+            echo '      APP_ENV: dev'                            >> compose.override.yml
+            echo '      APP_DEBUG: "1"'                          >> compose.override.yml
+            echo '      DATABASE_URL: "mysql://root@mysql/sylius_dev"' >> compose.override.yml
+            echo '  nginx:'                                      >> compose.override.yml
+            echo '    depends_on:'                               >> compose.override.yml
+            echo '      php:'                                    >> compose.override.yml
+            echo '        condition: service_started'            >> compose.override.yml
+            echo '    volumes:'                                  >> compose.override.yml
+            echo '      - ./public:/srv/sylius/public:ro'        >> compose.override.yml
+            echo '    ports:'                                    >> compose.override.yml
+            echo '      - "80:80"'                               >> compose.override.yml
+            echo '  mysql:'                                      >> compose.override.yml
+            echo '    ports:'                                    >> compose.override.yml
+            echo '      - "3306:3306"'                           >> compose.override.yml
           fi
           echo "=== compose.override.yml contents ==="
           cat compose.override.yml
