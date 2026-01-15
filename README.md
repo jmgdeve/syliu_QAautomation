@@ -285,6 +285,16 @@ export default defineConfig({
 
 ## Test Suites
 
+### 🔴 Critical Tests (`tests/critical/`)
+
+**These tests verify business-critical functionality that, if broken, causes immediate business impact.**
+
+| Test | Description | Business Impact |
+|------|-------------|-----------------|
+| `stock-validation.spec.ts` | Prevent overselling | Angry customers, refunds |
+| `price-integrity.spec.ts` | Verify price calculations | Financial loss |
+| `security-authorization.spec.ts` | Protect customer data | Data breaches, legal issues |
+
 ### Admin API Tests (`tests/admin_catalog/`, `tests/users_crud/`)
 
 | Test | Description |
@@ -300,6 +310,59 @@ export default defineConfig({
 |------|-------------|
 | `shop-cart.spec.ts` | Cart operations (add, update, remove items) |
 | `check-out.spec.ts` | Full checkout flow (address, shipping, payment) |
+
+---
+
+## Critical Test Coverage
+
+### Stock Validation (`stock-validation.spec.ts`)
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  OVERSELLING PREVENTION                                                │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ✓ Cannot add more items than available stock                         │
+│  ✓ Stock is decremented after successful order                        │
+│  ✓ Tracked variants show correct available quantity                   │
+│                                                                        │
+│  WHY CRITICAL: Selling items you don't have = refunds + angry users   │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Price Integrity (`price-integrity.spec.ts`)
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  FINANCIAL ACCURACY                                                    │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ✓ Item subtotal = unit price × quantity                              │
+│  ✓ Order total = items + shipping + tax                               │
+│  ✓ Currency is correctly displayed                                    │
+│  ✓ Zero/negative quantities rejected                                  │
+│                                                                        │
+│  WHY CRITICAL: Wrong prices = financial loss or legal issues          │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Security (`security-authorization.spec.ts`)
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  DATA PROTECTION                                                       │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ✓ User cannot access another user's cart                             │
+│  ✓ Shop users blocked from admin endpoints                            │
+│  ✓ Anonymous users blocked from authenticated endpoints               │
+│  ✓ Invalid JWT tokens rejected                                        │
+│  ✓ SQL injection attempts handled safely                              │
+│  ✓ Users can only modify their own resources                          │
+│                                                                        │
+│  WHY CRITICAL: Data breaches = legal liability + reputation damage    │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
