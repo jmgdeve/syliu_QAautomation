@@ -1,11 +1,11 @@
 import { test, expect, request } from '@playwright/test';
 import { AdminClient } from '../../lib/api/AdminClient';
 import { ShopClient } from '../../lib/api/ShopClient';
+import { defaultPassword, generateEmail, createCustomerData } from '../../lib/data/testData';
 
 let adminClient: AdminClient;
 let shopClient: ShopClient;
 let userEmail: string;
-const userPassword = "qauser1";
 let variantCode: string;
 let userId: string;
 let createdCarts: string[] = [];
@@ -16,27 +16,11 @@ test.beforeAll(async ({ }) => {
     await adminClient.login();
 
     // 2. Create User
-    userEmail = `testuser_${Date.now()}@example.com`;
-
-    const userData = {
-        email: userEmail,
-        firstName: "QA",
-        lastName: "User",
-        subscribedToNewsletter: true,
-        birthday: "2006-01-01T16:49:05.002Z",
-        localeCode: "en_US",
-        //sylius has 2 tables for user/customer
-        user: {
-            plainPassword: userPassword,
-            enabled: true
-
-        }
-
-    };
+    userEmail = generateEmail('testuser');
+    const userData = createCustomerData(userEmail, 'cart');
     const userResp = await adminClient.post('/api/v2/admin/customers', userData);
     expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
-    const userBody = await userResp.json();
-    userId = userBody.id;
+    userId = (await userResp.json()).id;
 
     // 3. Get existing Product Variant to use
   
@@ -57,7 +41,7 @@ test('Registered customer can initialize a cart and add a product', async ({ }) 
     // We use 'localhost' as baseURL to match the 'FASHION_WEB' channel configuration
     const shopContext = await request.newContext();
     shopClient = new ShopClient(shopContext);
-    await shopClient.login_token(userEmail, userPassword);
+    await shopClient.login_token(userEmail, defaultPassword);
 
     // Step 2: Create a new Cart
     const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
@@ -91,7 +75,7 @@ test('Registered customer can modify item quantity', async ({ }) => {
     // Step 1: Login to Shop API
     const shopContext = await request.newContext();
     shopClient = new ShopClient(shopContext);
-    await shopClient.login_token(userEmail, userPassword);
+    await shopClient.login_token(userEmail, defaultPassword);
 
     // Step 2: Create a new Cart
     const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
@@ -143,7 +127,7 @@ test('Registered customer can remove an item from the cart', async ({ }) => {
     // Step 1: Login to Shop API
     const shopContext = await request.newContext();
     shopClient = new ShopClient(shopContext);
-    await shopClient.login_token(userEmail, userPassword);
+    await shopClient.login_token(userEmail, defaultPassword);
 
     // Step 2: Create a new Cart
     const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
@@ -184,18 +168,15 @@ test.afterAll(async () => {
         const shopContext = await request.newContext();
         const cleanupShopClient = new ShopClient(shopContext);
         
-        // We might need to login if tokens require ownership, but standard cart deletion often works if we own it.
-        // However, the tokens in 'createdCarts' are just strings. The API needs to identify WHO is deleting it?
-
         if (userEmail) {
-             await cleanupShopClient.login_token(userEmail, userPassword);
+             await cleanupShopClient.login_token(userEmail, defaultPassword);
         }
 
         for (const token of createdCarts) {
             const deleteResp = await cleanupShopClient.delete(`/api/v2/shop/orders/${token}`);
-            // We don't assert strictly here because if it fails, it might be already deleted or 404
-            if (!deleteResp.ok()) {
-                console.log(`Failed to delete cart ${token}: ${deleteResp.status()}`);
+            // 404 = already deleted or empty cart (expected), only log unexpected errors
+            if (!deleteResp.ok() && deleteResp.status() !== 404) {
+                console.log(`Cleanup warning - cart ${token}: ${deleteResp.status()}`);
             }
         }
     }
