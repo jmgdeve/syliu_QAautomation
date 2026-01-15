@@ -77,34 +77,43 @@ jobs:
         working-directory: sylius
         run: |
           # Copy the dist file if it exists, otherwise create minimal override
+          # Check if Sylius files exist
+          echo "=== Verify Sylius files ==="
+          ls -la
+          echo ""
+          echo "=== composer.json exists? ==="
+          head -5 composer.json || echo "ERROR: composer.json not found!"
+          
           if [ -f compose.override.yml.dist ]; then
             echo "Using compose.override.yml.dist as base"
             cp compose.override.yml.dist compose.override.yml
+            # Enable debug mode
+            sed -i 's/APP_DEBUG: 0/APP_DEBUG: 1/g' compose.override.yml || true
           else
             echo "Creating minimal compose.override.yml"
-            # Create minimal override with volume mounts
-            cat > compose.override.yml << 'EOF'
-          services:
-            php:
-              volumes:
-                - .:/srv/sylius:rw
-                - ./public:/srv/sylius/public:rw
-              environment:
-                APP_ENV: dev
-                APP_DEBUG: 0
-                DATABASE_URL: "mysql://root@mysql/sylius_dev"
-            nginx:
-              depends_on:
-                php:
-                  condition: service_started
-              volumes:
-                - ./public:/srv/sylius/public:ro
-              ports:
-                - "80:80"
-            mysql:
-              ports:
-                - "3306:3306"
-          EOF
+            # Create override file with proper YAML (no indentation in heredoc!)
+            cat > compose.override.yml << 'ENDOFFILE'
+services:
+  php:
+    volumes:
+      - .:/srv/sylius:rw
+      - ./public:/srv/sylius/public:rw
+    environment:
+      APP_ENV: dev
+      APP_DEBUG: "1"
+      DATABASE_URL: "mysql://root@mysql/sylius_dev"
+  nginx:
+    depends_on:
+      php:
+        condition: service_started
+    volumes:
+      - ./public:/srv/sylius/public:ro
+    ports:
+      - "80:80"
+  mysql:
+    ports:
+      - "3306:3306"
+ENDOFFILE
           fi
           echo "=== compose.override.yml contents ==="
           cat compose.override.yml
@@ -238,8 +247,27 @@ jobs:
           done
           
           # Show detailed debugging info
-          echo "=== Check .env.local exists in container ==="
-          docker compose -f compose.yml -f compose.override.yml exec -T php cat .env.local || echo ".env.local not found!"
+          echo "=== Check files exist in container (volume mount working?) ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la / | head -20
+          echo ""
+          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/ | head -20 || echo "Cannot list /srv/sylius!"
+          
+          echo ""
+          echo "=== Check vendor directory exists ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/vendor/ | head -10 || echo "No vendor directory!"
+          
+          echo ""
+          echo "=== Check .env files ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/.env* || echo "No .env files found!"
+          
+          echo ""
+          echo "=== Check .env.local content (and line endings) ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php cat -A .env.local 2>/dev/null || echo ".env.local not found!"
+          
+          echo ""
+          echo "=== Check file permissions ==="
+          docker compose -f compose.yml -f compose.override.yml exec -T php id
+          docker compose -f compose.yml -f compose.override.yml exec -T php ls -la /srv/sylius/var/ || echo "No var directory!"
           
           echo ""
           echo "=== Check current Symfony environment ==="
