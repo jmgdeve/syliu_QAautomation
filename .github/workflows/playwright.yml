@@ -162,15 +162,18 @@ jobs:
           echo "QA admin user ready!"
 
       # ========================================================================
-      # STEP 8: BUILD FRONTEND ASSETS
+      # STEP 8: INSTALL ASSETS (skip frontend build for API testing)
       # ========================================================================
-      - name: Build frontend assets
+      # NOTE: We skip yarn build because:
+      # - Our tests are API-only (no browser UI testing)
+      # - The nodejs service requires additional setup
+      # - API endpoints work without compiled frontend
+      # ========================================================================
+      - name: Install Symfony assets
         working-directory: sylius
         run: |
           docker compose -f compose.yml -f compose.override.yml exec -T php bin/console assets:install public
-          docker compose -f compose.yml -f compose.override.yml run --rm nodejs yarn install
-          docker compose -f compose.yml -f compose.override.yml run --rm nodejs yarn build
-          echo "Frontend assets built!"
+          echo "Assets installed!"
 
       # ========================================================================
       # STEP 9: WAIT FOR NGINX TO BE READY
