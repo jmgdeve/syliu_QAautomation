@@ -78,19 +78,25 @@ jobs:
         run: |
           # Copy the dist file if it exists, otherwise create minimal override
           if [ -f compose.override.yml.dist ]; then
+            echo "Using compose.override.yml.dist as base"
             cp compose.override.yml.dist compose.override.yml
           else
+            echo "Creating minimal compose.override.yml"
             # Create minimal override with volume mounts
             cat > compose.override.yml << 'EOF'
           services:
             php:
               volumes:
                 - .:/srv/sylius:rw
+                - ./public:/srv/sylius/public:rw
               environment:
                 APP_ENV: dev
                 APP_DEBUG: 0
                 DATABASE_URL: "mysql://root@mysql/sylius_dev"
             nginx:
+              depends_on:
+                php:
+                  condition: service_started
               volumes:
                 - ./public:/srv/sylius/public:ro
               ports:
@@ -100,7 +106,7 @@ jobs:
                 - "3306:3306"
           EOF
           fi
-          echo "Override file created"
+          echo "=== compose.override.yml contents ==="
           cat compose.override.yml
 
       # ========================================================================
@@ -176,16 +182,35 @@ jobs:
           echo "Assets installed!"
 
       # ========================================================================
-      # STEP 9: WAIT FOR NGINX TO BE READY
+      # STEP 9: CHECK DOCKER STATUS AND WAIT FOR NGINX
       # ========================================================================
+      - name: Check Docker containers status
+        working-directory: sylius
+        run: |
+          echo "=== Docker containers status ==="
+          docker compose -f compose.yml -f compose.override.yml ps
+          echo ""
+          echo "=== Nginx logs ==="
+          docker compose -f compose.yml -f compose.override.yml logs nginx || true
+          echo ""
+          echo "=== PHP logs ==="
+          docker compose -f compose.yml -f compose.override.yml logs php || true
+
       - name: Wait for Nginx
         run: |
           echo "Waiting for Nginx..."
-          timeout 120 bash -c 'until curl -s http://localhost > /dev/null; do
-            echo "Waiting for web server..."
+          for i in {1..30}; do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost | grep -q "200\|302\|301"; then
+              echo "Sylius is ready at http://localhost!"
+              exit 0
+            fi
+            echo "Attempt $i: Waiting for web server..."
             sleep 5
-          done'
-          echo "Sylius is ready at http://localhost!"
+          done
+          echo "ERROR: Nginx did not respond after 30 attempts"
+          echo "=== Final curl attempt with verbose ==="
+          curl -v http://localhost || true
+          exit 1
 
       # ========================================================================
       # STEP 10: SETUP NODE.JS FOR PLAYWRIGHT
