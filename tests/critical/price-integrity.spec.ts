@@ -212,16 +212,18 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
     });
 
     test('Zero quantity items are not allowed', async () => {
-        shopClient = new ShopClient(await request.newContext());
-        await shopClient.login_token(userEmail, defaultPassword);
+        // Create a fresh shop client for this test
+        const testShopClient = new ShopClient(await request.newContext());
+        await testShopClient.login_token(userEmail, defaultPassword);
 
         // Create cart
-        const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
+        const cartResp = await testShopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
+        expect(cartResp.ok(), `Create cart failed: ${await cartResp.text()}`).toBeTruthy();
         const cart = await cartResp.json();
         const tokenValue = cart.tokenValue;
 
         // Try to add 0 items
-        const addResp = await shopClient.post(`/api/v2/shop/orders/${tokenValue}/items`, {
+        const addResp = await testShopClient.post(`/api/v2/shop/orders/${tokenValue}/items`, {
             productVariant: `/api/v2/shop/product-variants/${variantCode}`,
             quantity: 0 // Invalid!
         });
@@ -233,7 +235,7 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
         console.log(`✅ Zero quantity rejected with status ${status}`);
 
         // Cleanup
-        await shopClient.delete(`/api/v2/shop/orders/${tokenValue}`);
+        await testShopClient.delete(`/api/v2/shop/orders/${tokenValue}`);
     });
 
     test('Negative quantity items are not allowed', async () => {

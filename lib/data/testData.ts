@@ -51,8 +51,11 @@ export const addresses = {
 };
 
 // Helper to generate unique email
+// Uses timestamp + random suffix to prevent collisions in parallel test runs
 export function generateEmail(prefix: string): string {
-    return `${prefix}_${Date.now()}@example.com`;
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8); // 6 random chars
+    return `${prefix}_${timestamp}_${random}@example.com`;
 }
 
 // Helper to create full customer payload with credentials
@@ -81,13 +84,19 @@ export function createAddressPayload(addressKey: keyof typeof addresses = 'us') 
 }
 
 // Helper to generate unique product code
+// Uses timestamp + random suffix to prevent collisions in parallel test runs
 export function generateProductCode(prefix: string): string {
-    return `${prefix}_${Date.now()}`.toUpperCase();
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase(); // 4 random chars
+    return `${prefix}_${timestamp}_${random}`.toUpperCase();
 }
 
 // Helper to generate slug from name
+// Uses timestamp + random suffix to prevent collisions in parallel test runs
 export function generateSlug(name: string): string {
-    return name.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    return `${name.toLowerCase().replace(/\s+/g, '-')}-${timestamp}-${random}`;
 }
 
 // Helper to create product payload with variant
