@@ -33,6 +33,10 @@ syliu_QAautomation/
 ├── tests/
 │   ├── admin_catalog/
 │   │   └── product-inventory.spec.ts
+│   ├── critical/
+│   │   ├── price-integrity.spec.ts
+│   │   ├── security-authorization.spec.ts
+│   │   └── stock-validation.spec.ts
 │   ├── shop_user_test/
 │   │   ├── check-out.spec.ts
 │   │   └── shop-cart.spec.ts
@@ -113,12 +117,15 @@ export const adminCredentials = {
 // Templates
 export const users = { checkout: {...}, cart: {...}, basic: {...} };
 export const addresses = { us: {...} };
-export const products = { summerHat: {...}, stockTest: {...} };
 
 // Helpers (generate unique data for each test run)
 export function generateEmail(prefix: string): string;
 export function generateProductCode(prefix: string): string;
+export function generateSlug(name: string): string;
 export function createCustomerData(email, template, password);
+export function createAddressPayload(addressKey);
+export function createProductData(code, name, channelCode);
+export function createVariantData(productCode, variantCode, price, stock, channelCode);
 ```
 
 ### Why Centralized Data?
