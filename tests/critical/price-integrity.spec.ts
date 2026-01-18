@@ -12,6 +12,8 @@
  * 1. Order total = items + shipping + tax
  * 2. Item subtotal = unit price × quantity
  * 3. Promotion/coupon discounts apply correctly
+ * 
+ * NOTE: Each test is fully isolated for parallel execution
  */
 
 import { test, expect, request } from '@playwright/test';
@@ -24,48 +26,49 @@ import {
     createAddressPayload
 } from '../../lib/data/testData';
 
-test.describe('🔴 CRITICAL: Price Integrity', () => {
-    let adminClient: AdminClient;
-    let shopClient: ShopClient;
-    let userEmail: string;
-    let variantCode: string;
-    let variantPrice: number;
+/**
+ * Helper to get a product variant for price tests
+ * Each test calls this independently to avoid shared state
+ */
+async function getTestVariant(adminClient: AdminClient): Promise<{ code: string; price: number }> {
+    const variantsResp = await adminClient.get('/api/v2/admin/product-variants?itemsPerPage=1');
+    expect(variantsResp.ok()).toBeTruthy();
+    const variants = await variantsResp.json();
+    
+    if (variants['hydra:member'] && variants['hydra:member'].length > 0) {
+        const variant = variants['hydra:member'][0];
+        let price = 1000; // Default fallback
+        
+        if (variant.channelPricings && Object.keys(variant.channelPricings).length > 0) {
+            const channelKey = Object.keys(variant.channelPricings)[0];
+            price = variant.channelPricings[channelKey].price;
+        }
+        
+        return { code: variant.code, price };
+    }
+    
+    throw new Error('No product variants available for testing');
+}
 
-    test.beforeAll(async () => {
-        // Setup admin client
-        adminClient = new AdminClient(await request.newContext());
+test.describe('🔴 CRITICAL: Price Integrity', () => {
+    // Tests run in parallel - each test is fully isolated
+
+    test('Item subtotal equals unit price × quantity', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
         await adminClient.login();
 
-        // Get an existing product variant with known price
-        const variantsResp = await adminClient.get('/api/v2/admin/product-variants?itemsPerPage=1');
-        expect(variantsResp.ok()).toBeTruthy();
-        const variants = await variantsResp.json();
-        
-        if (variants['hydra:member'] && variants['hydra:member'].length > 0) {
-            const variant = variants['hydra:member'][0];
-            variantCode = variant.code;
-            
-            // Get the price from channel pricing
-            if (variant.channelPricings && Object.keys(variant.channelPricings).length > 0) {
-                const channelKey = Object.keys(variant.channelPricings)[0];
-                variantPrice = variant.channelPricings[channelKey].price;
-            } else {
-                variantPrice = 1000; // Default fallback
-            }
-        } else {
-            throw new Error('No product variants available for testing');
-        }
+        // Get a product variant
+        const { code: variantCode } = await getTestVariant(adminClient);
 
-        // Create test user
-        userEmail = generateEmail('price_test');
+        // Create unique test user
+        const userEmail = generateEmail('price_subtotal_test');
         const userResp = await adminClient.post('/api/v2/admin/customers',
             createCustomerData(userEmail, 'checkout'));
         expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
-    });
 
-    test('Item subtotal equals unit price × quantity', async () => {
         // Login as shop user
-        shopClient = new ShopClient(await request.newContext());
+        const shopClient = new ShopClient(await request.newContext());
         await shopClient.login_token(userEmail, defaultPassword);
 
         // Create cart
@@ -115,12 +118,22 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
     });
 
     test('Order total includes items, shipping, and adjustments', async () => {
-        // Create a new user for clean order
-        const orderEmail = generateEmail('total_test');
+        // Increase timeout for checkout flow
+        test.setTimeout(60000);
+
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Get a product variant
+        const { code: variantCode } = await getTestVariant(adminClient);
+
+        // Create unique test user
+        const orderEmail = generateEmail('price_total_test');
         await adminClient.post('/api/v2/admin/customers', createCustomerData(orderEmail, 'checkout'));
 
         // Login and create cart
-        shopClient = new ShopClient(await request.newContext());
+        const shopClient = new ShopClient(await request.newContext());
         await shopClient.login_token(orderEmail, defaultPassword);
 
         const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
@@ -215,6 +228,10 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
     });
 
     test('Prices are shown in correct currency', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
         // Get channel info to verify currency
         const channelsResp = await adminClient.get('/api/v2/admin/channels');
         expect(channelsResp.ok()).toBeTruthy();
@@ -227,8 +244,14 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
             console.log(`   Currencies enabled: ${channel.currencies?.length || 'N/A'}`);
         }
 
+        // Create unique test user
+        const userEmail = generateEmail('price_currency_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers',
+            createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
         // Create cart and verify currency in order
-        shopClient = new ShopClient(await request.newContext());
+        const shopClient = new ShopClient(await request.newContext());
         await shopClient.login_token(userEmail, defaultPassword);
 
         const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
@@ -242,18 +265,31 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
     });
 
     test('Zero quantity items are not allowed', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Get a product variant
+        const { code: variantCode } = await getTestVariant(adminClient);
+
+        // Create unique test user
+        const userEmail = generateEmail('price_zero_qty_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers',
+            createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
         // Create a fresh shop client for this test
-        const testShopClient = new ShopClient(await request.newContext());
-        await testShopClient.login_token(userEmail, defaultPassword);
+        const shopClient = new ShopClient(await request.newContext());
+        await shopClient.login_token(userEmail, defaultPassword);
 
         // Create cart
-        const cartResp = await testShopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
+        const cartResp = await shopClient.post('/api/v2/shop/orders', { localeCode: 'en_US' });
         expect(cartResp.ok(), `Create cart failed: ${await cartResp.text()}`).toBeTruthy();
         const cart = await cartResp.json();
         const tokenValue = cart.tokenValue;
 
         // Try to add 0 items
-        const addResp = await testShopClient.post(`/api/v2/shop/orders/${tokenValue}/items`, {
+        const addResp = await shopClient.post(`/api/v2/shop/orders/${tokenValue}/items`, {
             productVariant: `/api/v2/shop/product-variants/${variantCode}`,
             quantity: 0 // Invalid!
         });
@@ -265,11 +301,24 @@ test.describe('🔴 CRITICAL: Price Integrity', () => {
         console.log(`✅ Zero quantity rejected with status ${status}`);
 
         // Cleanup
-        await testShopClient.delete(`/api/v2/shop/orders/${tokenValue}`);
+        await shopClient.delete(`/api/v2/shop/orders/${tokenValue}`);
     });
 
     test('Negative quantity items are not allowed', async () => {
-        shopClient = new ShopClient(await request.newContext());
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Get a product variant
+        const { code: variantCode } = await getTestVariant(adminClient);
+
+        // Create unique test user
+        const userEmail = generateEmail('price_neg_qty_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers',
+            createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
+        const shopClient = new ShopClient(await request.newContext());
         await shopClient.login_token(userEmail, defaultPassword);
 
         // Create cart

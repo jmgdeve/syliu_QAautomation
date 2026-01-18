@@ -13,6 +13,8 @@
  * 2. Shop users cannot access admin endpoints
  * 3. Anonymous users cannot access authenticated endpoints
  * 4. Tokens expire and are validated correctly
+ * 
+ * NOTE: Each test is fully isolated for parallel execution
  */
 
 import { test, expect, request } from '@playwright/test';
@@ -25,30 +27,23 @@ import {
 } from '../../lib/data/testData';
 
 test.describe('🔴 CRITICAL: Security & Authorization', () => {
-    // Run tests serially to avoid race conditions
-    test.describe.configure({ mode: 'serial' });
+    // Tests run in parallel - each test is fully isolated
 
-    let adminClient: AdminClient;
-    let userAEmail: string;
-    let userBEmail: string;
-
-    test.beforeAll(async () => {
-        // Setup admin client
-        adminClient = new AdminClient(await request.newContext());
+    test('User cannot access another users cart', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
         await adminClient.login();
 
-        // Create two separate test users
-        userAEmail = generateEmail('security_user_a');
-        userBEmail = generateEmail('security_user_b');
+        // Create two separate unique test users
+        const userAEmail = generateEmail('security_cart_user_a');
+        const userBEmail = generateEmail('security_cart_user_b');
 
         const userAResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userAEmail, 'basic'));
         expect(userAResp.ok(), `Create user A failed: ${await userAResp.text()}`).toBeTruthy();
 
         const userBResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userBEmail, 'basic'));
         expect(userBResp.ok(), `Create user B failed: ${await userBResp.text()}`).toBeTruthy();
-    });
 
-    test('User cannot access another users cart', async () => {
         // User A creates a cart
         const shopClientA = new ShopClient(await request.newContext());
         await shopClientA.login_token(userAEmail, defaultPassword);
@@ -74,9 +69,18 @@ test.describe('🔴 CRITICAL: Security & Authorization', () => {
     });
 
     test('Shop user cannot access admin endpoints', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Create unique test user
+        const userEmail = generateEmail('security_admin_access_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
         // Login as shop user (customer)
         const shopClient = new ShopClient(await request.newContext());
-        await shopClient.login_token(userAEmail, defaultPassword);
+        await shopClient.login_token(userEmail, defaultPassword);
 
         // Try to access admin endpoints with shop token
         const adminEndpoints = [
@@ -150,9 +154,18 @@ test.describe('🔴 CRITICAL: Security & Authorization', () => {
     });
 
     test('SQL injection in parameters is handled safely', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Create unique test user
+        const userEmail = generateEmail('security_sql_inject_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
         // Login as shop user
         const shopClient = new ShopClient(await request.newContext());
-        await shopClient.login_token(userAEmail, defaultPassword);
+        await shopClient.login_token(userEmail, defaultPassword);
 
         // Try SQL injection in various parameters
         const maliciousInputs = [
@@ -179,6 +192,20 @@ test.describe('🔴 CRITICAL: Security & Authorization', () => {
     });
 
     test('User can only modify their own cart', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Create two unique test users
+        const userAEmail = generateEmail('security_modify_cart_user_a');
+        const userBEmail = generateEmail('security_modify_cart_user_b');
+
+        const userAResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userAEmail, 'basic'));
+        expect(userAResp.ok(), `Create user A failed: ${await userAResp.text()}`).toBeTruthy();
+
+        const userBResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userBEmail, 'basic'));
+        expect(userBResp.ok(), `Create user B failed: ${await userBResp.text()}`).toBeTruthy();
+
         // User A creates a cart
         const shopClientA = new ShopClient(await request.newContext());
         await shopClientA.login_token(userAEmail, defaultPassword);
@@ -252,8 +279,17 @@ test.describe('🔴 CRITICAL: Security & Authorization', () => {
     });
 
     test('Rate limiting or request throttling exists', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Create unique test user
+        const userEmail = generateEmail('security_rate_limit_test');
+        const userResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(userEmail, 'basic'));
+        expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
+
         const shopClient = new ShopClient(await request.newContext());
-        await shopClient.login_token(userAEmail, defaultPassword);
+        await shopClient.login_token(userEmail, defaultPassword);
 
         // Make many rapid requests
         const requests: Promise<import('@playwright/test').APIResponse>[] = [];

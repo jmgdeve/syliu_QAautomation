@@ -11,6 +11,8 @@
  * 1. Cannot add more items than available stock
  * 2. Stock is decremented after successful order
  * 3. Cannot checkout when product becomes unavailable
+ * 
+ * NOTE: Each test is fully isolated for parallel execution
  */
 
 import { test, expect, request } from '@playwright/test';
@@ -25,44 +27,38 @@ import {
 } from '../../lib/data/testData';
 
 test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
-    // Run tests serially to avoid race conditions with shared product state
-    test.describe.configure({ mode: 'serial' });
+    // Tests run in parallel - each test is fully isolated
 
-    let adminClient: AdminClient;
-    let productCode: string;
-    let variantCode: string;
-    let userEmail: string;
-    const LIMITED_STOCK = 3; // Only 3 items available
-
-    test.beforeAll(async () => {
-        // Setup admin client
-        adminClient = new AdminClient(await request.newContext());
+    test('Cannot add more items than available stock', async () => {
+        // Setup: Create isolated admin client
+        const adminClient = new AdminClient(await request.newContext());
         await adminClient.login();
 
-        // Create a product with LIMITED STOCK for testing
-        productCode = generateProductCode('LIMITED');
-        variantCode = `${productCode}_VAR`;
+        // Create a unique product with LIMITED STOCK for this test
+        const productCode = generateProductCode('LIMITED_ADD');
+        const variantCode = `${productCode}_VAR`;
+        const LIMITED_STOCK = 3;
 
-        // Step 1: Create the product WITH translations (required by Sylius API)
+        // Create the product
         const productResp = await adminClient.post('/api/v2/admin/products', {
             code: productCode,
             enabled: true,
             translations: {
                 en_US: {
-                    name: 'Limited Stock Test Product',
-                    slug: `limited-stock-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                    name: 'Limited Stock Test Product - Add Test',
+                    slug: `limited-stock-add-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
                     locale: 'en_US'
                 }
             }
         });
         expect(productResp.ok(), `Create product failed: ${await productResp.text()}`).toBeTruthy();
 
-        // Step 3: Create variant with LIMITED stock and tracking enabled
+        // Create variant with LIMITED stock and tracking enabled
         const variantResp = await adminClient.post('/api/v2/admin/product-variants', {
             code: variantCode,
             product: `/api/v2/admin/products/${productCode}`,
             onHand: LIMITED_STOCK,
-            tracked: true, // IMPORTANT: Enable stock tracking
+            tracked: true,
             channelPricings: {
                 FASHION_WEB: {
                     price: 1999,
@@ -78,14 +74,12 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
         expect(variant.onHand).toBe(LIMITED_STOCK);
         expect(variant.tracked).toBe(true);
 
-        // Create test user
-        userEmail = generateEmail('stock_test');
+        // Create unique test user for this test
+        const userEmail = generateEmail('stock_add_test');
         const userResp = await adminClient.post('/api/v2/admin/customers',
             createCustomerData(userEmail, 'basic'));
         expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
-    });
 
-    test('Cannot add more items than available stock', async () => {
         // Login as shop user
         const shopClient = new ShopClient(await request.newContext());
         await shopClient.login_token(userEmail, defaultPassword);
@@ -122,23 +116,30 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
             console.log(`✅ Request rejected with status ${status} - overselling prevented`);
         }
 
-        // Cleanup: Delete the cart
+        // Cleanup
         await shopClient.delete(`/api/v2/shop/orders/${tokenValue}`);
+        try {
+            await adminClient.delete(`/api/v2/admin/products/${productCode}`);
+        } catch (e) {
+            // Ignore cleanup errors
+        }
     });
 
     test('Stock is decremented after successful order', async () => {
-        // Create own admin client for this test to avoid race conditions
-        const testAdminClient = new AdminClient(await request.newContext());
-        await testAdminClient.login();
+        // Increase timeout for full checkout flow
+        test.setTimeout(60000);
+        // Create own admin client for this test
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
 
-        // Create a separate product for this test
-        const testProductCode = generateProductCode('STOCK_DEC');
-        const testVariantCode = `${testProductCode}_VAR`;
+        // Create a unique product for this test
+        const productCode = generateProductCode('STOCK_DEC');
+        const variantCode = `${productCode}_VAR`;
         const INITIAL_STOCK = 5;
 
         // Create product with channel association
-        const productResp = await testAdminClient.post('/api/v2/admin/products', {
-            code: testProductCode,
+        const productResp = await adminClient.post('/api/v2/admin/products', {
+            code: productCode,
             enabled: true,
             channels: ['/api/v2/admin/channels/FASHION_WEB'],
             translations: {
@@ -152,9 +153,9 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
         expect(productResp.ok(), `Create product failed: ${await productResp.text()}`).toBeTruthy();
 
         // Create variant with stock
-        const variantResp = await testAdminClient.post('/api/v2/admin/product-variants', {
-            code: testVariantCode,
-            product: `/api/v2/admin/products/${testProductCode}`,
+        const variantResp = await adminClient.post('/api/v2/admin/product-variants', {
+            code: variantCode,
+            product: `/api/v2/admin/products/${productCode}`,
             onHand: INITIAL_STOCK,
             tracked: true,
             channelPricings: {
@@ -167,7 +168,7 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
         const shopContext = await request.newContext();
         let productVisible = false;
         for (let attempt = 0; attempt < 5; attempt++) {
-            const checkResp = await shopContext.get(`/api/v2/shop/product-variants/${testVariantCode}`, {
+            const checkResp = await shopContext.get(`/api/v2/shop/product-variants/${variantCode}`, {
                 headers: { 'Accept': 'application/ld+json' }
             });
             if (checkResp.ok()) {
@@ -181,9 +182,9 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
 
         console.log(`Initial stock: ${INITIAL_STOCK}`);
 
-        // Create a user for this order
+        // Create a unique user for this order
         const orderUserEmail = generateEmail('order_stock');
-        const userResp = await testAdminClient.post('/api/v2/admin/customers', createCustomerData(orderUserEmail, 'checkout'));
+        const userResp = await adminClient.post('/api/v2/admin/customers', createCustomerData(orderUserEmail, 'checkout'));
         expect(userResp.ok(), `Create user failed: ${await userResp.text()}`).toBeTruthy();
 
         // Complete a full order
@@ -198,7 +199,7 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
 
         // Add 1 item to cart
         const addResp = await shopClient.post(`/api/v2/shop/orders/${tokenValue}/items`, {
-            productVariant: `/api/v2/shop/product-variants/${testVariantCode}`,
+            productVariant: `/api/v2/shop/product-variants/${variantCode}`,
             quantity: 1
         });
         expect(addResp.ok(), `Add item failed: ${await addResp.text()}`).toBeTruthy();
@@ -264,7 +265,7 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Verify stock was decremented
-        const afterResp = await testAdminClient.get(`/api/v2/admin/product-variants/${testVariantCode}`);
+        const afterResp = await adminClient.get(`/api/v2/admin/product-variants/${variantCode}`);
         const afterData = await afterResp.json();
         const finalStock = afterData.onHand;
         console.log(`Final stock: ${finalStock}`);
@@ -275,34 +276,68 @@ test.describe('🔴 CRITICAL: Stock Validation - Prevent Overselling', () => {
         expect(stockDecrementedOrHeld, `Expected stock ${INITIAL_STOCK} to be decremented or held, got onHand=${finalStock}, onHold=${afterData.onHold || 0}`).toBeTruthy();
         console.log(`✅ Stock tracked correctly: onHand=${finalStock}, onHold=${afterData.onHold || 0}`);
 
-        // Cleanup: Delete test product
+        // Cleanup
         try {
-            await testAdminClient.delete(`/api/v2/admin/products/${testProductCode}`);
+            await adminClient.delete(`/api/v2/admin/products/${productCode}`);
         } catch (e) {
             // Ignore cleanup errors
         }
     });
 
     test('Tracked variant shows correct available quantity', async () => {
-        // Verify the variant is being tracked
-        const variantResp = await adminClient.get(`/api/v2/admin/product-variants/${variantCode}`);
-        const variant = await variantResp.json();
+        // Create own admin client for this test
+        const adminClient = new AdminClient(await request.newContext());
+        await adminClient.login();
+
+        // Create a unique product for this test
+        const productCode = generateProductCode('TRACKED_VAR');
+        const variantCode = `${productCode}_VAR`;
+        const EXPECTED_STOCK = 7;
+
+        // Create the product
+        const productResp = await adminClient.post('/api/v2/admin/products', {
+            code: productCode,
+            enabled: true,
+            translations: {
+                en_US: {
+                    name: 'Tracked Variant Test Product',
+                    slug: `tracked-var-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                    locale: 'en_US'
+                }
+            }
+        });
+        expect(productResp.ok(), `Create product failed: ${await productResp.text()}`).toBeTruthy();
+
+        // Create variant with tracking enabled
+        const variantResp = await adminClient.post('/api/v2/admin/product-variants', {
+            code: variantCode,
+            product: `/api/v2/admin/products/${productCode}`,
+            onHand: EXPECTED_STOCK,
+            tracked: true,
+            channelPricings: {
+                FASHION_WEB: {
+                    price: 2999,
+                    channelCode: 'FASHION_WEB'
+                }
+            }
+        });
+        expect(variantResp.ok(), `Create variant failed: ${await variantResp.text()}`).toBeTruthy();
+
+        // Verify the variant is being tracked correctly
+        const verifyResp = await adminClient.get(`/api/v2/admin/product-variants/${variantCode}`);
+        const variant = await verifyResp.json();
 
         expect(variant.tracked).toBe(true);
+        expect(variant.onHand).toBe(EXPECTED_STOCK);
         expect(variant.onHand).toBeGreaterThanOrEqual(0);
         
         console.log(`✅ Variant ${variantCode}: tracked=${variant.tracked}, onHand=${variant.onHand}`);
-    });
 
-    test.afterAll(async () => {
-        // Cleanup: Delete test product
-        if (adminClient && productCode) {
-            try {
-                await adminClient.delete(`/api/v2/admin/products/${productCode}`);
-                console.log(`Cleaned up test product: ${productCode}`);
-            } catch (e) {
-                // Ignore cleanup errors
-            }
+        // Cleanup
+        try {
+            await adminClient.delete(`/api/v2/admin/products/${productCode}`);
+        } catch (e) {
+            // Ignore cleanup errors
         }
     });
 });
